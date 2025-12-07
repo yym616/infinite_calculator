@@ -1,50 +1,49 @@
 #include <stdio.h>
 #include <stdlib.h>
-#include "preprocessing.h"
+#include <string.h>
 #include "calculate.h"
-int main(int argc, char* argv[])
-{
-    if (argc < 2) {
-        fprintf(stderr, "사용법: %s <파일이름>\n", argv[0]);
-        return 1;
+#include "preprocessing.h"
+
+char* read_file(const char* filename) {
+    FILE* fp = fopen(filename, "r");
+    if (!fp) {
+        perror("file open failed");
+        exit(1);
     }
 
-    FILE* fp = fopen(argv[1], "r");
-    if (fp == NULL)
-    {
-        perror("파일 오픈 실패");
-        return 1;
-    }
+    fseek(fp, 0, SEEK_END);
+    long size = ftell(fp);
+    fseek(fp, 0, SEEK_SET);
 
-    char* line = read_line(fp);
-    if (line == NULL) {
-        printf("입력을 읽지 못했습니다.\n");
-        fclose(fp);
-        return 1;
-    }
-
-    // 개행(\n)까지 같이 읽혀 있으면 길이/출력에 영향 줄 수 있으니 정리
-    int len = (int)strlen(line);
-    if (len > 0 && line[len - 1] == '\n') {
-        line[len - 1] = '\0';
-        len--;
-    }
-
-    char* post = postfix(line, len);
-    if (post == NULL) {
-        printf("postfix 변환 실패\n");
-        free(line);
-        fclose(fp);
-        return 1;
-    }
-
-    printf("infix  : %s\n", line);
-    printf("postfix: %s\n", post);  // 🔥 여기서 결과 확인
-
-    BigNumber* res = calculate(post);
-    print_bignumber(res);
-    free(post);
-    free(line);
+    char* buf = malloc(size + 1);
+    fread(buf, 1, size, fp);
+    buf[size] = '\0';
     fclose(fp);
+    return buf;
+}
+
+int main(int argc, char* argv[]) {
+
+    if (argc < 2) {
+        printf("사용법: %s <입력파일>\n", argv[0]);
+        return 0;
+    }
+
+    char* input = read_file(argv[1]);
+    char* expr = preprocess(input);    // 공백 제거 + 암시적 곱셈 삽입
+    char* postfix = infix_to_postfix(expr);
+
+    BigNumber* result = evaluate_postfix(postfix);
+
+    printf("Result = ");
+    print_bignumber(result);
+    printf("\n");
+
+    free(input);
+    free(expr);
+    free(postfix);
+
+    free_bignumber(result);
+
     return 0;
 }

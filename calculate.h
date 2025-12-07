@@ -3,245 +3,483 @@
 
 #include <stdio.h>
 #include <stdlib.h>
-#include <ctype.h>
 #include <string.h>
+#include <ctype.h>
 
-/* ==================== BigNumber 정의 ==================== */
+/* ===============================
+ *  BigNumber 구조체 정의
+ *  - 임의 길이 10진수
+ *  - digits: LSB(1의 자리)가 head 에 있는 연결리스트
+ *  - scale: 소수부 자리수 (10^scale 로 나눈 값)
+ *  - sign: 1 또는 -1
+ * =============================== */
 
 typedef struct DigitNode {
-    int digit;                  
-    struct DigitNode* prev;
-    struct DigitNode* next;
+    int digit;
+    struct DigitNode *next;
+    struct DigitNode *prev;
 } DigitNode;
 
 typedef struct BigNumber {
-    DigitNode* head;
-    DigitNode* tail;
-    int scale;          // 소수부 자리수
+    int sign;          // 1 또는 -1
+    int scale;         // 소수부 자리수
+    DigitNode *head;   // LSB
+    DigitNode *tail;   // MSB
 } BigNumber;
 
-/* ==================== BigNumber 생성/유틸 ==================== */
+/* ====== 유틸 함수 ====== */
 
-static BigNumber* create_bignumber() {
-    BigNumber* bn = malloc(sizeof(BigNumber));
-    bn->head = bn->tail = NULL;
-    bn->scale = 0;
-    return bn;
+static DigitNode* new_digit(int d) {
+    DigitNode *n = (DigitNode*)malloc(sizeof(DigitNode));
+    n->digit = d;
+    n->next = n->prev = NULL;
+    return n;
 }
 
-static void append_digit(BigNumber* bn, int digit, int in_fraction) {
-    DigitNode* node = malloc(sizeof(DigitNode));
-    node->digit = digit;
-    node->next = NULL;
-    node->prev = bn->tail;
-
-    if (!bn->tail)
-        bn->head = node;
-    else
-        bn->tail->next = node;
-
-    bn->tail = node;
-
-    if (in_fraction)
-        bn->scale++;
+static BigNumber* new_bignumber(void) {
+    BigNumber *n = (BigNumber*)malloc(sizeof(BigNumber));
+    n->sign = 1;
+    n->scale = 0;
+    n->head = n->tail = NULL;
+    return n;
 }
 
-static void free_bignumber(BigNumber* bn) {
-    DigitNode* p = bn->head;
-    while (p) {
-        DigitNode* nx = p->next;
-        free(p);
-        p = nx;
+static void push_lsb(BigNumber *n, int d) { // head 쪽(LSB)에 삽입
+    DigitNode *x = new_digit(d);
+    x->next = n->head;
+    if (n->head) n->head->prev = x;
+    n->head = x;
+    if (!n->tail) n->tail = x;
+}
+
+static void push_msb(BigNumber *n, int d) { // tail 쪽(MSB)에 삽입
+    DigitNode *x = new_digit(d);
+    x->prev = n->tail;
+    if (n->tail) n->tail->next = x;
+    n->tail = x;
+    if (!n->head) n->head = x;
+}
+
+static int length_digits(const BigNumber *n) {
+    int len = 0;
+    DigitNode *cur = (DigitNode*)n->head;
+    while (cur) {
+        len++;
+        cur = cur->next;
     }
-    free(bn);
+    return len;
 }
 
-/* 문자열 → BigNumber (ex: "123.45") */
-static BigNumber* make_bignumber_from_token(const char* token, size_t len) {
-    BigNumber* bn = create_bignumber();
-    int in_fraction = 0;
-
-    for (size_t i = 0; i < len; i++) {
-        char c = token[i];
-        if (c == '.') {
-            in_fraction = 1;
-            continue;
-        }
-        if (!isdigit((unsigned char)c)) continue;
-
-        append_digit(bn, c - '0', in_fraction);
+static BigNumber* clone_bignumber(const BigNumber *src) {
+    BigNumber *n = new_bignumber();
+    n->sign = src->sign;
+    n->scale = src->scale;
+    DigitNode *cur = src->head;
+    while (cur) {
+        push_msb(n, cur->digit);
+        cur = cur->next;
     }
-    return bn;
+    return n;
 }
 
-/* ==================== BigNumber 스택 ==================== */
+/* zero 체크 & 정규화 */
 
-typedef struct BigNode {
-    BigNumber* value;
-    struct BigNode* next;
-} BigNode;
-
-static void push_big(BigNode** top, BigNumber* v) {
-    BigNode* n = malloc(sizeof(BigNode));
-    n->value = v;
-    n->next = *top;
-    *top = n;
-}
-
-static BigNumber* pop_big(BigNode** top) {
-    if (!*top) return NULL;
-    BigNode* del = *top;
-    BigNumber* v = del->value;
-    *top = del->next;
-    free(del);
-    return v;
-}
-
-/* ==================== 덧셈 add(a, b) ==================== */
-
-BigNumber* add(const BigNumber* A, const BigNumber* B) {
-    if (!A || !B) return NULL;
-
-    /* A, B 전체 길이 */
-    int lenA = 0, lenB = 0;
-    for (DigitNode* p = A->head; p; p = p->next) lenA++;
-    for (DigitNode* p = B->head; p; p = p->next) lenB++;
-
-    int fracA = A->scale;
-    int fracB = B->scale;
-
-    int intA  = lenA - fracA;
-    int intB  = lenB - fracB;
-
-    int frac_res = (fracA > fracB ? fracA : fracB);
-    int int_res  = (intA  > intB  ? intA  : intB);
-
-    int L = int_res + frac_res;      // 정수부+소수부 총 길이
-
-    /* A, B를 자릿수 배열로 변환해서 같은 자리 정렬 */
-    int* a = calloc(L, sizeof(int));
-    int* b = calloc(L, sizeof(int));
-
-    /* A 채우기 */
-    {
-        DigitNode* p = A->head;
-        int off = int_res - intA;    // 정수부 왼쪽 패딩 길이
-
-        for (int i = 0; i < intA; i++) {
-            a[off + i] = p->digit;
-            p = p->next;
-        }
-        for (int i = 0; i < fracA; i++) {
-            a[int_res + i] = p->digit;
-            p = p->next;
-        }
+static int is_zero(const BigNumber *n) {
+    DigitNode *cur = n->head;
+    while (cur) {
+        if (cur->digit != 0) return 0;
+        cur = cur->next;
     }
-
-    /* B 채우기 */
-    {
-        DigitNode* p = B->head;
-        int off = int_res - intB;
-
-        for (int i = 0; i < intB; i++) {
-            b[off + i] = p->digit;
-            p = p->next;
-        }
-        for (int i = 0; i < fracB; i++) {
-            b[int_res + i] = p->digit;
-            p = p->next;
-        }
-    }
-
-    /* 정수 덧셈 (캐리 포함) */
-    int* R = calloc(L + 1, sizeof(int));
-    int carry = 0;
-
-    for (int i = L - 1; i >= 0; i--) {
-        int sum = a[i] + b[i] + carry;
-        R[i + 1] = sum % 10;
-        carry = sum / 10;
-    }
-    R[0] = carry;
-
-    free(a);
-    free(b);
-
-    /* BigNumber 결과 생성
-       🔥 scale 은 append_digit 에서만 증가시키고
-       여기서는 직접 건드리지 않는다!!
-    */
-    BigNumber* res = create_bignumber();
-
-    int start = (R[0] == 0 ? 1 : 0);     // 맨 앞 0이면 스킵
-
-    for (int i = start; i <= L; i++) {
-        int d = R[i];
-        int pos_from_right = L - i;      // 0 = 제일 오른쪽 자리
-        int in_fraction = (pos_from_right < frac_res);
-        append_digit(res, d, in_fraction);
-    }
-
-    free(R);
-    return res;
+    return 1;
 }
 
-/* ==================== calculate(postfix) ==================== */
-
-static int is_op(const char* t, size_t len) {
-    return (len == 1 && (t[0] == '+' || t[0] == '-' || t[0] == '*' || t[0] == '/'));
-}
-
-static BigNumber* calculate(const char* post) {
-    BigNode* st = NULL;
-    const char* p = post;
-
-    while (*p) {
-        while (*p && isspace((unsigned char)*p)) p++;
-        if (!*p) break;
-
-        const char* s = p;
-        while (*p && !isspace((unsigned char)*p)) p++;
-        size_t len = p - s;
-
-        if (is_op(s, len)) {
-            BigNumber* b = pop_big(&st);
-            BigNumber* a = pop_big(&st);
-            BigNumber* r = add(a, b);
-            push_big(&st, r);
-        } else {
-            BigNumber* x = make_bignumber_from_token(s, len);
-            push_big(&st, x);
-        }
-    }
-
-    return pop_big(&st);
-}
-
-/* ==================== print_bignumber ==================== */
-
-static void print_bignumber(const BigNumber* bn) {
-    if (!bn) {
-        printf("(null)");
+static void normalize(BigNumber *n) {
+    if (!n->head) {
+        push_msb(n, 0);
+        n->scale = 0;
+        n->sign = 1;
         return;
     }
 
-    int total = 0;
-    for (DigitNode* p = bn->head; p; p = p->next)
-        total++;
-
-    int int_len = total - bn->scale;   // 정수 자릿수
-
-    if (int_len <= 0)
-        printf("0");                   // 0.xxx 형태
-
-    int idx = 0;
-    for (DigitNode* p = bn->head; p; p = p->next, idx++) {
-
-        if (idx == int_len && bn->scale > 0)
-            printf(".");
-
-        printf("%d", p->digit);
+    // 앞쪽(MSB) 불필요한 0 제거 (integer part에서)
+    int len = length_digits(n);
+    while (n->tail && n->tail->digit == 0 && len > n->scale + 1) {
+        DigitNode *t = n->tail;
+        n->tail = t->prev;
+        if (n->tail) n->tail->next = NULL;
+        else n->head = NULL;
+        free(t);
+        len--;
     }
+
+    if (!n->head) {
+        push_msb(n, 0);
+        n->scale = 0;
+        n->sign = 1;
+        return;
+    }
+
+    if (is_zero(n)) {
+        n->sign = 1;
+        // 0.xxx 꼴로 남을 수 있는데, 편의상 scale 0으로 줄임
+        n->scale = 0;
+    }
+}
+
+/* ===============================
+ *  문자열 -> BigNumber
+ * =============================== */
+
+static BigNumber* parse_number(const char *s) {
+    BigNumber *n = new_bignumber();
+    int i = 0;
+    int len = (int)strlen(s);
+
+    // 부호
+    if (s[i] == '+') i++;
+    else if (s[i] == '-') {
+        n->sign = -1;
+        i++;
+    }
+
+    int dot_pos = -1;
+    int tmp_len = 0;
+    int digits_buf[1024];  // 토큰 하나 기준이라 1024면 충분
+
+    for (; i < len; i++) {
+        if (s[i] == '.') {
+            dot_pos = tmp_len;
+        } else if (isdigit((unsigned char)s[i])) {
+            digits_buf[tmp_len++] = s[i] - '0';
+        }
+    }
+
+    if (dot_pos == -1) {
+        n->scale = 0;
+    } else {
+        n->scale = tmp_len - dot_pos;
+    }
+
+    if (tmp_len == 0) {
+        push_msb(n, 0);
+        n->scale = 0;
+        n->sign = 1;
+        return n;
+    }
+
+    // digits_buf[0] = 가장 왼쪽(최상위 자리)
+    // LSB부터 넣기 위해 뒤에서부터 읽어서 push_msb
+    for (int k = tmp_len - 1; k >= 0; k--) {
+        push_msb(n, digits_buf[k]);
+    }
+
+    normalize(n);
+    return n;
+}
+
+/* ===============================
+ *  BigNumber 출력
+ * =============================== */
+
+static void print_bignumber(const BigNumber *n) {
+    if (n->sign < 0 && !is_zero(n)) printf("-");
+
+    int len = length_digits(n);
+    int scale = n->scale;
+
+    // MSB부터 찍으면서 scale 위치에서 '.' 찍기
+    DigitNode *cur = n->tail;
+    for (int idx = len - 1; idx >= 0; idx--) {
+        if (!cur) break;
+        printf("%d", cur->digit);
+        if (scale > 0 && idx == scale) {
+            printf(".");
+        }
+        cur = cur->prev;
+    }
+
+    // 소수부가 있는데, 자리가 scale보다 적으면 0 채우는 처리도 가능하지만
+    // 현재 구조에서는 필요 없음
+}
+
+/* ===============================
+ *  scale 맞추기 (동일하게 변경)
+ * =============================== */
+
+static void align_scales(BigNumber *a, BigNumber *b) {
+    if (a->scale == b->scale) return;
+
+    if (a->scale < b->scale) {
+        int diff = b->scale - a->scale;
+        for (int i = 0; i < diff; i++) {
+            push_lsb(a, 0);      // 값 *10
+        }
+        a->scale = b->scale;
+    } else {
+        int diff = a->scale - b->scale;
+        for (int i = 0; i < diff; i++) {
+            push_lsb(b, 0);
+        }
+        b->scale = a->scale;
+    }
+}
+
+/* ===============================
+ *  크기 비교 (절댓값)
+ * =============================== */
+
+static int compare_abs(const BigNumber *A, const BigNumber *B) {
+    BigNumber *a = clone_bignumber(A);
+    BigNumber *b = clone_bignumber(B);
+    align_scales(a, b);
+
+    int lenA = length_digits(a);
+    int lenB = length_digits(b);
+
+    if (lenA != lenB) {
+        int res = (lenA > lenB) ? 1 : -1;
+        free(a); free(b); // 여기서는 대강, digits는 릭 나도 상관없음
+        return res;
+    }
+
+    DigitNode *ca = a->tail;
+    DigitNode *cb = b->tail;
+    while (ca && cb) {
+        if (ca->digit != cb->digit) {
+            int res = (ca->digit > cb->digit) ? 1 : -1;
+            free(a); free(b);
+            return res;
+        }
+        ca = ca->prev;
+        cb = cb->prev;
+    }
+    free(a); free(b);
+    return 0;
+}
+
+/* ===============================
+ *  절댓값 덧셈 / 뺄셈 (scale 동일 가정)
+ * =============================== */
+
+static BigNumber* add_abs(const BigNumber *A, const BigNumber *B) {
+    BigNumber *R = new_bignumber();
+    R->sign = 1;
+    R->scale = A->scale; // A, B 동일 가정
+
+    DigitNode *da = A->head;
+    DigitNode *db = B->head;
+    int carry = 0;
+
+    while (da || db || carry) {
+        int ad = da ? da->digit : 0;
+        int bd = db ? db->digit : 0;
+        int sum = ad + bd + carry;
+        carry = sum / 10;
+        push_msb(R, sum % 10);
+
+        if (da) da = da->next;
+        if (db) db = db->next;
+    }
+
+    normalize(R);
+    return R;
+}
+
+static BigNumber* sub_abs(const BigNumber *A, const BigNumber *B) {
+    // |A| >= |B| 가정
+    BigNumber *R = new_bignumber();
+    R->sign = 1;
+    R->scale = A->scale;
+
+    DigitNode *da = A->head;
+    DigitNode *db = B->head;
+    int borrow = 0;
+
+    while (da || db) {
+        int ad = da ? da->digit : 0;
+        int bd = db ? db->digit : 0;
+
+        int diff = ad - borrow - bd;
+        if (diff < 0) {
+            diff += 10;
+            borrow = 1;
+        } else borrow = 0;
+
+        push_msb(R, diff);
+
+        if (da) da = da->next;
+        if (db) db = db->next;
+    }
+
+    normalize(R);
+    return R;
+}
+
+/* ===============================
+ *  add / subtract / multiply
+ * =============================== */
+
+static BigNumber* add(const BigNumber *A, const BigNumber *B) {
+    // 0 처리
+    if (is_zero(A)) return clone_bignumber(B);
+    if (is_zero(B)) return clone_bignumber(A);
+
+    BigNumber *a = clone_bignumber(A);
+    BigNumber *b = clone_bignumber(B);
+
+    align_scales(a, b);
+
+    BigNumber *R = NULL;
+
+    if (a->sign == b->sign) {
+        R = add_abs(a, b);
+        R->sign = a->sign;
+    } else {
+        int cmp = compare_abs(a, b);
+        if (cmp == 0) {
+            R = new_bignumber();
+            push_msb(R, 0);
+            R->sign = 1;
+            R->scale = a->scale;
+        } else if (cmp > 0) {
+            R = sub_abs(a, b);
+            R->sign = a->sign;
+        } else {
+            R = sub_abs(b, a);
+            R->sign = b->sign;
+        }
+    }
+
+    normalize(R);
+    return R;
+}
+
+static BigNumber* subtract(const BigNumber *A, const BigNumber *B) {
+    BigNumber *nb = clone_bignumber(B);
+    nb->sign *= -1;
+    BigNumber *R = add(A, nb);
+    return R;
+}
+
+static BigNumber* multiply(const BigNumber *A, const BigNumber *B) {
+    BigNumber *a = clone_bignumber(A);
+    BigNumber *b = clone_bignumber(B);
+
+    int lenA = length_digits(a);
+    int lenB = length_digits(b);
+
+    int maxLen = lenA + lenB + 2;
+    int *arr = (int*)calloc(maxLen, sizeof(int));
+
+    int i = 0;
+    for (DigitNode *da = a->head; da; da = da->next, i++) {
+        int j = 0;
+        for (DigitNode *db = b->head; db; db = db->next, j++) {
+            arr[i+j] += da->digit * db->digit;
+        }
+    }
+
+    // carry 처리
+    for (int k = 0; k < maxLen - 1; k++) {
+        if (arr[k] >= 10) {
+            arr[k+1] += arr[k] / 10;
+            arr[k] %= 10;
+        }
+    }
+
+    // 실제 길이 계산
+    int resLen = maxLen - 1;
+    while (resLen > 0 && arr[resLen] == 0) resLen--;
+
+    BigNumber *R = new_bignumber();
+    R->sign = a->sign * b->sign;
+    R->scale = a->scale + b->scale;
+
+    for (int k = 0; k <= resLen; k++) {
+        push_msb(R, arr[k]);
+    }
+
+    free(arr);
+    normalize(R);
+    return R;
+}
+
+/* ===============================
+ *  후위표기 계산기
+ * =============================== */
+
+typedef struct NumNode {
+    BigNumber *num;
+    struct NumNode *next;
+} NumNode;
+
+static void push_num(NumNode **st, BigNumber *n) {
+    NumNode *x = (NumNode*)malloc(sizeof(NumNode));
+    x->num = n;
+    x->next = *st;
+    *st = x;
+}
+
+static BigNumber* pop_num(NumNode **st) {
+    if (!*st) return NULL;
+    NumNode *t = *st;
+    *st = t->next;
+    BigNumber *n = t->num;
+    free(t);
+    return n;
+}
+
+static BigNumber* evaluate_postfix(const char *post) {
+    NumNode *stack = NULL;
+    char token[1024];
+    int i = 0;
+
+    while (post[i]) {
+        while (post[i] == ' ') i++;
+        if (!post[i]) break;
+
+        if (isdigit((unsigned char)post[i]) || post[i] == '.') {
+            int ti = 0;
+            while (isdigit((unsigned char)post[i]) || post[i] == '.') {
+                token[ti++] = post[i++];
+            }
+            token[ti] = '\0';
+            BigNumber *n = parse_number(token);
+            push_num(&stack, n);
+        } else if (post[i] == '+' || post[i] == '-' || post[i] == '*') {
+            char op = post[i++];
+            BigNumber *b = pop_num(&stack);
+            BigNumber *a = pop_num(&stack);
+            BigNumber *r = NULL;
+
+            if (op == '+') r = add(a, b);
+            else if (op == '-') r = subtract(a, b);
+            else if (op == '*') r = multiply(a, b);
+
+            push_num(&stack, r);
+        } else {
+            // 기타 문자(안 쓰는 것)는 스킵
+            i++;
+        }
+    }
+
+    BigNumber *res = pop_num(&stack);
+    return res;
+}
+
+/* ===============================
+ *  free 함수 (간단 버전)
+ * =============================== */
+
+static void free_bignumber(BigNumber *n) {
+    if (!n) return;
+    DigitNode *cur = n->head;
+    while (cur) {
+        DigitNode *t = cur;
+        cur = cur->next;
+        free(t);
+    }
+    free(n);
 }
 
 #endif

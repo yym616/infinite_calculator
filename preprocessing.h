@@ -1,155 +1,100 @@
-#include <stdio.h>
-#include <stdlib.h>   // malloc, realloc, free
-#include <string.h>   // strlen
-#include <ctype.h>    // isdigit
+#ifndef PREPROCESSING_H
+#define PREPROCESSING_H
 
-// read_line, postfix, calculate, +, -, *, /
+#include <ctype.h>
+#include <string.h>
+#include <stdlib.h>
 
-char* read_line(FILE* fp);
-char* postfix(char* line, int len);
+/* 공백 제거 + 암시적 곱셈 처리
+ *  - "2(3+2)"  -> "2*(3+2)"
+ *  - "(1+2)3"  -> "(1+2)*3"
+ */
+static char* preprocess(const char *s) {
+    int len = (int)strlen(s);
+    char *out = (char*)malloc(len * 2 + 10);
+    int j = 0;
 
-struct NODE {
-    char operator;
-    struct NODE* next;
-};
+    for (int i = 0; i < len; i++) {
+        char c = s[i];
+        if (c == ' ' || c == '\t' || c == '\n') continue;
 
-void push(struct NODE* target, char operator);
-char pop(struct NODE* target);
-int precedence(char op);
+        out[j++] = c;
 
-/* ----------------- 입력 한 줄 읽기 ----------------- */
+        char next = s[i+1];
+        if (!next) continue;
 
-char* read_line(FILE* fp)
-{
-    char* buf = NULL;
-    size_t len = 0;
-    int ch;
-
-    while ((ch = fgetc(fp)) != EOF) {
-        char* new_buf = realloc(buf, len + 2);
-        if (new_buf == NULL) {
-            free(buf);
-            return NULL;
+        // 숫자 또는 ')' 뒤에 바로 '(' 오는 경우: 곱셈
+        if ((isdigit((unsigned char)c) || c == ')') && next == '(') {
+            out[j++] = '*';
         }
-        buf = new_buf;
-
-        buf[len++] = (char)ch;
-
-        if (ch == '\n') {
-            break;
+        // ')' 뒤에 숫자가 오는 경우도 곱셈
+        if (c == ')' && isdigit((unsigned char)next)) {
+            out[j++] = '*';
         }
     }
-    if (len == 0) {
-        free(buf);
-        return NULL;
-    }
 
-    buf[len] = '\0';
-    return buf;   // 👉 나중에 main에서 free 해줘야 함
+    out[j] = '\0';
+    return out;
 }
 
-/* -------------- 연산자 우선순위 함수 -------------- */
-
-int precedence(char op)
-{
-    if (op == '*' || op == '/') return 2;
+static int precedence(char op) {
     if (op == '+' || op == '-') return 1;
+    if (op == '*') return 2;
     return 0;
 }
 
-/* ------------- infix → postfix 변환 -------------- */
+/* 중위식 -> 후위식 (Shunting-yard) */
+static char* infix_to_postfix(const char *s) {
+    int len = (int)strlen(s);
+    char *out = (char*)malloc(len * 3 + 10);
+    int j = 0;
 
-char* postfix(char* line, int len)
-{
-    struct NODE top = { 0, NULL };             // 스택 헤드 (더미노드)
-    char* post = malloc(len * 3 + 10);         // 공백 때문에 여유 있게
-    int j = 0;                                 // post 인덱스
+    char opstack[512];
+    int top = -1;
 
-    if (post == NULL) {
-        return NULL;
-    }
+    for (int i = 0; i < len; i++) {
+        char c = s[i];
 
-    for (int i = 0; i < len && line[i] != '\0'; i++)
-    {
-        char c = line[i];
-
-        // 🔹 숫자 또는 '.' → 하나의 실수 토큰으로 처리
         if (isdigit((unsigned char)c) || c == '.') {
-            // 숫자/점이 끝날 때까지 계속 복사
-            while (i < len && line[i] != '\0' &&
-                (isdigit((unsigned char)line[i]) || line[i] == '.')) {
-                post[j++] = line[i++];
+            // 숫자/소수 토큰
+            out[j++] = c;
+            if (!(isdigit((unsigned char)s[i+1]) || s[i+1] == '.')) {
+                out[j++] = ' ';
             }
-            post[j++] = ' ';   // 토큰 구분용 공백
-            i--;               // for문의 i++ 보정
         }
-        // 🔹 연산자 처리
-        else if (c == '+' || c == '-' || c == '*' || c == '/') {
-
-            // 스택 top의 우선순위가 현재 연산자보다 크거나 같으면 pop해서 출력
-            while (top.next != NULL &&
-                precedence(top.next->operator) >= precedence(c)) {
-
-                // 연산자 앞에 공백 하나 (토큰 구분)
-                if (j > 0 && post[j - 1] != ' ')
-                    post[j++] = ' ';
-
-                post[j++] = pop(&top);
-                post[j++] = ' ';   // 연산자 뒤에도 공백
+        else if (c == '(') {
+            opstack[++top] = c;
+        }
+        else if (c == ')') {
+            while (top >= 0 && opstack[top] != '(') {
+                out[j++] = opstack[top--];
+                out[j++] = ' ';
             }
-
-            push(&top, c);
+            if (top >= 0 && opstack[top] == '(') top--; // '(' pop
         }
-        // 🔹 공백/탭은 무시
-        else if (c == ' ' || c == '\t') {
-            // 그냥 무시
+        else if (c == '+' || c == '-' || c == '*') {
+            while (top >= 0 && opstack[top] != '(' &&
+                   precedence(opstack[top]) >= precedence(c)) {
+                out[j++] = opstack[top--];
+                out[j++] = ' ';
+            }
+            opstack[++top] = c;
         }
-        // 그 외 문자는 현재는 무시
+        else {
+            // 기타 문자는 무시
+        }
     }
 
-    // 🔹 스택에 남은 연산자들 모두 출력
-    while (top.next != NULL) {
-        if (j > 0 && post[j - 1] != ' ')
-            post[j++] = ' ';
-
-        post[j++] = pop(&top);
-        post[j++] = ' ';
+    while (top >= 0) {
+        if (opstack[top] != '(') {
+            out[j++] = opstack[top];
+            out[j++] = ' ';
+        }
+        top--;
     }
 
-    // 마지막 공백 하나 정리
-    if (j > 0 && post[j - 1] == ' ')
-        j--;
-
-    post[j] = '\0';
-    return post;
+    out[j] = '\0';
+    return out;
 }
 
-/* ---------------- 스택 push / pop ---------------- */
-
-void push(struct NODE* target, char operator)
-{
-    struct NODE* pushNode = malloc(sizeof(struct NODE));
-    if (pushNode == NULL) return;
-
-    pushNode->operator = operator;
-    pushNode->next = target->next;
-    target->next = pushNode;
-}
-
-char pop(struct NODE* target)
-{
-    char popData;
-
-    if (target->next == NULL) {
-        printf("Stack is empty!\n");
-        return '\0';
-    }
-
-    struct NODE* delNode = target->next;
-    popData = delNode->operator;
-
-    target->next = delNode->next;
-    free(delNode);
-
-    return popData;
-}
+#endif
