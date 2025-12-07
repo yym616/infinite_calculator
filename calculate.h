@@ -185,6 +185,94 @@ BigNumber* add(const BigNumber* A, const BigNumber* B) {
     return res;
 }
 
+/* ==================== 곱셈 mul(a,b) ==================== */
+
+BigNumber* mul(const BigNumber* A, const BigNumber* B) {
+    if (!A || !B) return NULL;
+
+    /* A, B 전체 길이 */
+    int lenA = 0, lenB = 0;
+    for (DigitNode* p = A->head; p; p = p->next) lenA++;
+    for (DigitNode* p = B->head; p; p = p->next) lenB++;
+
+    int fracA = A->scale;
+    int fracB = B->scale;
+
+    int len_res = lenA + lenB; //곱셈 결과의 최댓 길이
+    
+    int scale_res = fracA + fracB; //결과의 소수점 자릿수
+
+
+    /* A, B를 자릿수 배열로 변환 (왼쪽-> 오른쪽) */
+    /*곱셈의 경우 자릿수 맟출필요없이, 곱해주고 -> 두 값의 자릿수 
+    더해주면 됨!*/
+    int* a = calloc(lenA, sizeof(int));
+    int* b = calloc(lenB, sizeof(int));
+
+    /* A 채우기 */ 
+    {
+        DigitNode* p = A->head;
+
+        for (int i = 0; i < lenA; i++) {
+            a[i] = p->digit;
+            p = p->next;
+        }
+    }
+
+    /* B 채우기 */
+    {
+        DigitNode* p = B->head;
+
+        for (int i = 0; i < lenB; i++) {
+            b[i] = p->digit;
+            p = p->next;
+        }
+
+    }
+
+    /* 정수 곱셈 (캐리 포함) */
+    int* R = calloc(len_res, sizeof(int));
+
+    for (int i = lenA - 1; i >= 0; i--) {
+        for ( int j = lenB-1; j >=0; j-- ){
+            int mul = a[i] * b[j];
+            int sum =  mul + R[i+j+1]; 
+
+            R[i+j+1] = sum %10;
+            R[i+j] += sum/10;
+        }
+    }
+
+    free(a);
+    free(b);
+
+    /* BigNumber 결과 생성
+       🔥 scale 은 append_digit 에서만 증가시키고
+       여기서는 직접 건드리지 않는다!!
+    */
+    BigNumber* res = create_bignumber();
+
+    int start = 0;
+
+    while( start < len_res-1){
+        int pos_from_right = len_res - start;      //정수부의 불필요한 0 모두 제거완료됐다면
+        if(R[start]==0 && pos_from_right >scale_res+1)//0.xx일경우 살리기
+            start++;
+        else
+            break; //맨앞 0 부분 모두 제거.
+    }
+    for ( int i = start; i < len_res;i++){
+        int d = R[i];
+        int pos_from_right = len_res -i; 
+        int in_fraction = (pos_from_right <= scale_res);
+
+        append_digit(res, d , in_fraction);
+    }
+
+    free(R);
+    return res;
+}
+
 /* ==================== calculate(postfix) ==================== */
 
 static int is_op(const char* t, size_t len) {
@@ -206,7 +294,19 @@ static BigNumber* calculate(const char* post) {
         if (is_op(s, len)) {
             BigNumber* b = pop_big(&st);
             BigNumber* a = pop_big(&st);
-            BigNumber* r = add(a, b);
+            BigNumber* r = NULL;
+            if ( s[0] == '+'){
+                r = add(a,b);
+            } else if (s[0] == '*'){
+                r = mul(a,b);
+
+            } /*else if ( s[0] == '-')
+                    r = sub(a,b);
+                else if ( s[0] == '/')
+                    r = div(a,b)
+                    */
+            free_bignumber(a);
+            free_bignumber(b);
             push_big(&st, r);
         } else {
             BigNumber* x = make_bignumber_from_token(s, len);

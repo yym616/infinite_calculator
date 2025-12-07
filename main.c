@@ -5,25 +5,25 @@
 int main(int argc, char* argv[])
 {
     if (argc < 2) {
-        fprintf(stderr, "ì‚¬ìš©ë²•: %s <íŒŒì¼ì´ë¦„>\n", argv[0]);
+        fprintf(stderr, "»ç¿ë¹ı: %s <ÆÄÀÏÀÌ¸§>\n", argv[0]);
         return 1;
     }
 
     FILE* fp = fopen(argv[1], "r");
     if (fp == NULL)
     {
-        perror("íŒŒì¼ ì˜¤í”ˆ ì‹¤íŒ¨");
+        perror("ÆÄÀÏ ¿ÀÇÂ ½ÇÆĞ");
         return 1;
     }
 
     char* line = read_line(fp);
     if (line == NULL) {
-        printf("ì…ë ¥ì„ ì½ì§€ ëª»í–ˆìŠµë‹ˆë‹¤.\n");
+        printf("ÀÔ·ÂÀ» ÀĞÁö ¸øÇß½À´Ï´Ù.\n");
         fclose(fp);
         return 1;
     }
 
-    // ê°œí–‰(\n)ê¹Œì§€ ê°™ì´ ì½í˜€ ìˆìœ¼ë©´ ê¸¸ì´/ì¶œë ¥ì— ì˜í–¥ ì¤„ ìˆ˜ ìˆìœ¼ë‹ˆ ì •ë¦¬
+    // °³Çà(\n)±îÁö °°ÀÌ ÀĞÇô ÀÖÀ¸¸é ±æÀÌ/Ãâ·Â¿¡ ¿µÇâ ÁÙ ¼ö ÀÖÀ¸´Ï Á¤¸®
     int len = (int)strlen(line);
     if (len > 0 && line[len - 1] == '\n') {
         line[len - 1] = '\0';
@@ -32,16 +32,17 @@ int main(int argc, char* argv[])
 
     char* post = postfix(line, len);
     if (post == NULL) {
-        printf("postfix ë³€í™˜ ì‹¤íŒ¨\n");
+        printf("postfix º¯È¯ ½ÇÆĞ\n");
         free(line);
         fclose(fp);
         return 1;
     }
 
     printf("infix  : %s\n", line);
-    printf("postfix: %s\n", post);  // ğŸ”¥ ì—¬ê¸°ì„œ ê²°ê³¼ í™•ì¸
+    printf("postfix: %s\n", post);  // ? ¿©±â¼­ °á°ú È®ÀÎ
 
     BigNumber* res = calculate(post);
+    printf("result is: ");
     print_bignumber(res);
     free(post);
     free(line);
