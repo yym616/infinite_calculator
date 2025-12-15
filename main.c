@@ -2,13 +2,11 @@
 #include <stdlib.h>
 #include <string.h>
 #include "calculate.h"
-#include "preprocessing.h"
 #include "exception.h"
-#include <stdlib.h>
+#include "operation.h"
+#include "preprocessing.h"
 
 int main(void) {
-    system("chcp 65001");
-    system("cls");
     int problem = 0;        //문제 번호
     char *line;             //한 줄=한 문제
 
@@ -64,4 +62,3 @@ int main(void) {
 
     return 0;
 }
-
